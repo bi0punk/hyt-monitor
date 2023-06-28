@@ -79,4 +79,4 @@ async def receive_sensor_data(request: Request):
 
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='192.168.1.104', port=8000, debug=True)
+    uvicorn.run(app, host='127.0.0.1', port=8000, debug=True)
