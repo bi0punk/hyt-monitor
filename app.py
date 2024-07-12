@@ -1,20 +1,26 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.templating import Jinja2Templates
-import datetime
-import sqlite3
+from pydantic import BaseModel
 from termcolor import colored
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse
+import json
+import sqlite3
+import datetime
+import uvicorn
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+data_file = "data.json"
 database = 'sensor_data.db'
 
+class SensorData(BaseModel):
+    temperature: float
 
 def get_db_connection():
     conn = sqlite3.connect(database)
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def save_sensor_data(temperature):
     conn = get_db_connection()
@@ -24,7 +30,6 @@ def save_sensor_data(temperature):
     conn.commit()
     conn.close()
 
-
 def fetch_sensor_data():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -32,7 +37,6 @@ def fetch_sensor_data():
     sensor_data = [{'id': row['id'], 'temperature': row['temperature'], 'timestamp': row['timestamp']} for row in cursor.fetchall()]
     conn.close()
     return sensor_data
-
 
 def obtener_temperatura_minima():
     conn = get_db_connection()
@@ -42,41 +46,48 @@ def obtener_temperatura_minima():
     conn.close()
     return temperatura_minima
 
-
-@app.get('/')
-def index(request: Request):
+@app.get("/")
+async def home(request: Request):
     ultimo = fetch_sensor_data()[-1]
     temperature = ultimo.get('temperature')
     date_event = ultimo.get('timestamp')
     minima_temp = obtener_temperatura_minima()
-    return templates.TemplateResponse('index.html', {"request": request, "temperature": temperature, "date_event": date_event, "minima_temp": minima_temp})
+    return templates.TemplateResponse("index.html", {"request": request, "temperature": temperature, "date_event": date_event, "minima_temp": minima_temp})
 
+@app.post("/sensor")
+async def receive_sensor_data(sensor_data: SensorData):
+    temperature = sensor_data.temperature
 
-@app.get('/data')
+    # Print formatted sensor data
+    temperature_text = colored("temperature", "blue", attrs=["bold"])
+    colored_temperature = colored(temperature, "green", attrs=["bold"])
+    message = f"{temperature_text}: {colored_temperature}"
+    print(f"{temperature_text}: {colored_temperature}")
+
+    # Save data to the database
+    save_sensor_data(temperature)
+
+    # Append data to JSON file
+    sensor_id = len(fetch_sensor_data()) + 1
+    current_datetime = datetime.now()
+    data_entry = {
+        "id": sensor_id,
+        "temperatura": temperature,
+        "fecha": current_datetime.strftime("%Y-%m-%d"),
+        "hora": current_datetime.strftime("%H:%M:%S")
+    }
+
+    with open(data_file, "a") as file:
+        json.dump(data_entry, file, indent=2)
+        file.write("\n")  
+
+    return {"message": "Datos recibidos correctamente"}
+
+@app.get("/data")
 def get_data():
     ultimo = fetch_sensor_data()[-1]
     temperature = ultimo.get('temperature')
     return JSONResponse(content={"temperature": temperature})
 
-
-@app.post('/sensor')
-async def receive_sensor_data(request: Request):
-    data = await request.json()
-
-    for key, value in data.items():
-        formatted_key = colored(key, 'green', attrs=['bold'])  # Aplica color verde y estilo bold a la clave
-        formatted_value = colored(value, 'blue', attrs=['bold'])  # Aplica color azul y estilo bold al valor
-        formatted_data = f"{formatted_key}: {formatted_value}"
-        print(formatted_data)
-
-    if data is not None and 'temperature' in data:
-        temperature = float(data['temperature'])
-        save_sensor_data(temperature)
-        rounded = round(temperature)
-        return str(temperature)
-    else:
-        return 'error'
-
-
-if __name__ == '__main__':
-    uvicorn.run(app, host='127.0.0.1', port=8000, debug=True)
+if __name__ == "__main__":
+    uvicorn.run(app)
