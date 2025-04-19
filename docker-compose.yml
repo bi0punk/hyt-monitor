@@ -1,0 +1,11 @@
+version: '3.9'
+
+services:
+  sensor_api:
+    build: .
+    container_name: sensor_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./sensor_data:/app/sensor_data  # Montar solo el directorio sensor_data
+    restart: unless-stopped
