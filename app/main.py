@@ -1,15 +1,16 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 import csv
 import os
 import pytz
+import time
 
 app = FastAPI()
 
 class SensorData(BaseModel):
-    temperatura: float
-    humedad: float
+    temperatura: float = Field(..., ge=-50, le=100)
+    humedad: float = Field(..., ge=0, le=100)
 
 # Especifica la ruta completa al volumen montado
 CSV_FILE = "/app/sensor_data/datos_sensor.csv"
@@ -21,9 +22,20 @@ if not os.path.exists(CSV_FILE):
         writer = csv.writer(f)
         writer.writerow(["timestamp", "temperatura", "humedad"])
 
+def rotate_csv_if_needed():
+    MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+    if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > MAX_SIZE:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        rotated = f"{CSV_FILE}.{ts}"
+        os.rename(CSV_FILE, rotated)
+        with open(CSV_FILE, mode="w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "temperatura", "humedad"])
+        print(f"[INFO] CSV rotated: {rotated}")
+
 @app.post("/api/sensor-data")
 async def recibir_datos(data: SensorData):
-    # Establecer la zona horaria de Chile
+    rotate_csv_if_needed()
     chile_timezone = pytz.timezone('Chile/Continental')
     timestamp = datetime.now(chile_timezone).isoformat()
     
