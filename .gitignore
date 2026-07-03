@@ -162,3 +162,7 @@ cython_debug/
 
 *.db
 *.json
+
+# Runtime sensor data (se genera al arrancar)
+sensor_data/*.csv
+sensor_data/*.db

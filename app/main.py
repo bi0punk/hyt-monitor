@@ -1,10 +1,11 @@
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from datetime import datetime
 import csv
 import os
-import pytz
 import time
+from datetime import datetime
+
+import pytz
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
 app = FastAPI()
 
@@ -12,8 +13,8 @@ class SensorData(BaseModel):
     temperatura: float = Field(..., ge=-50, le=100)
     humedad: float = Field(..., ge=0, le=100)
 
-# Especifica la ruta completa al volumen montado
-CSV_FILE = "/app/sensor_data/datos_sensor.csv"
+# Ruta al volumen montado (configurable vía entorno para tests/otros entornos)
+CSV_FILE = os.environ.get("HYT_CSV_FILE", "/app/sensor_data/datos_sensor.csv")
 
 # Crear el archivo si no existe
 if not os.path.exists(CSV_FILE):
