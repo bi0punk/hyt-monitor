@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Temperature and humidity monitoring system. An ESP32 with an SHT31 sensor reads environmental data and sends it to a FastAPI server via HTTP POST. The server stores data in a rotating CSV and exposes a REST endpoint.
+Temperature and humidity monitoring system. An ESP32 with an SHT31 sensor reads environmental data and sends it to a FastAPI server via HTTP POST. The server stores data in a rotating CSV and exposes REST endpoints for ingestion and query.
 
 ## Tabla de contenidos
 
@@ -18,43 +18,48 @@ Temperature and humidity monitoring system. An ESP32 with an SHT31 sensor reads 
 - [CI](#ci)
 - [Configuración](#configuración)
 - [Datos](#datos)
-- [Limitaciones y roadmap](#limitaciones-y-roadmap)
+- [Seguridad](#seguridad)
 - [Licencia](#licencia)
 
 ## Características
 
-- Firmware ESP32 (SHT31) que POSTea lecturas a un servidor FastAPI.
-- Validación de rangos con Pydantic (temperatura -50..100 °C, humedad 0..100 %).
-- Persistencia en CSV con rotación automática a los 10 MB.
-- Timestamp en zona horaria `Chile/Continental`.
-- Despliegue con Docker + volumen persistente para `sensor_data/`.
+- Firmware ESP32 (SHT31) que POSTea lecturas a un servidor FastAPI
+- Validación de rangos con Pydantic (temperatura -50..100 °C, humedad 0..100 %)
+- Persistencia en CSV con rotación automática a los 10 MB
+- Timestamp en zona horaria `Chile/Continental`
+- Despliegue con Docker + volumen persistente para `sensor_data/`
+- Autenticación vía API Key en todos los endpoints
+- Rate limiting configurable por IP
+- Endpoint GET para consulta de datos históricos
+- Protección contra race condition en rotación CSV (`threading.Lock`)
 
 ## Stack
 
-- **Lenguaje**: Python 3.12+ (servidor) · C++/Arduino (firmware ESP32).
-- **Web**: FastAPI + Uvicorn.
-- **Sensor**: SHT31 (I2C) vía firmware `sht.ino`.
-- **Persistencia**: CSV rotante.
-- **TZ**: pytz (`Chile/Continental`).
-- **Calidad**: ruff (lint), pytest.
-- **Despliegue**: Docker (`python:3.11`) + Docker Compose.
+- **Lenguaje**: Python 3.12+ (servidor) · C++/Arduino (firmware ESP32)
+- **Web**: FastAPI + Uvicorn
+- **Sensor**: SHT31 (I2C) vía firmware `sht.ino`
+- **Persistencia**: CSV rotante
+- **TZ**: pytz (`Chile/Continental`)
+- **Calidad**: ruff (lint), pytest
+- **Despliegue**: Docker + Docker Compose
 
 ## Arquitectura
 
 ```
-ESP32 + SHT31  ──HTTP POST──►  FastAPI (app.main)  ──append──►  sensor_data/datos_sensor.csv
-                                              (rotación 10MB)
+ESP32 + SHT31 ──HTTP POST──► FastAPI (app.main) ──append──► sensor_data/datos_sensor.csv
+                 (API Key)                       (rotación 10MB)
 ```
 
-- El ESP32 lee temperatura/humedad del SHT31 y hace `POST /api/sensor-data`.
-- El servidor valida con Pydantic, timestampa y appenda al CSV (rotación a 10MB).
-- `sensor_data/` se monta como volumen en Docker para persistencia.
+- El ESP32 lee temperatura/humedad del SHT31 y hace `POST /api/sensor-data`
+- El servidor valida con Pydantic, timestampa y appenda al CSV (rotación a 10MB)
+- `sensor_data/` se monta como volumen en Docker para persistencia
+- Las credenciales WiFi del ESP32 se configuran en `credentials.h` (copiado desde `credentials.example.h`)
 
 ## Requisitos
 
-- Python 3.12+ (o Docker).
-- ESP32 + sensor SHT31 para el firmware (opcional para solo servidor).
-- Wi-Fi entre ESP32 y el host del servidor.
+- Python 3.12+ (o Docker)
+- ESP32 + sensor SHT31 para el firmware (opcional para solo servidor)
+- Wi-Fi entre ESP32 y el host del servidor
 
 ## Instalación
 
@@ -73,21 +78,20 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+### Firmware ESP32
+
+1. Copia `credentials.example.h` a `credentials.h`
+2. Edita `credentials.h` con tu SSID, password WiFi y URL del servidor
+3. Flashea `sht.ino` al ESP32 con Arduino IDE
+
 ## Uso
 
-### ESP32
-
-Flashea `sht.ino` al ESP32 con Arduino IDE (ajusta SSID, password y URL del servidor en el sketch).
-
-### Servidor
-
-La API queda en `http://localhost:8000`.
-
-Endpoint:
+### POST — Enviar datos del sensor
 
 ```bash
 curl -X POST http://localhost:8000/api/sensor-data \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: tu_api_key' \
   -d '{"temperatura": 22.5, "humedad": 60.0}'
 ```
 
@@ -97,37 +101,46 @@ Respuesta:
 {"status": "ok", "timestamp": "2026-07-02T...-04:00"}
 ```
 
+### GET — Consultar datos
+
+```bash
+curl -H 'X-API-Key: tu_api_key' http://localhost:8000/api/sensor-data?limit=100
+```
+
 ## Tests
 
 ```bash
 pytest -q
 ```
 
-Cobertura (`tests/test_smoke.py`): POST de lectura válida (verifica escritura de CSV cabecera+fila) y validación de rangos (422 para valores fuera de rango). Usa `HYT_CSV_FILE` para apuntar a un CSV efímero.
-
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`) sobre Python 3.12:
 
 - **lint** — `ruff check .`
-- **test** — instala deps + `pytest -q`
+- **test** — pytest
 
 ## Configuración
 
 Variables de entorno:
 
-- `HYT_CSV_FILE` — ruta del CSV (default `/app/sensor_data/datos_sensor.csv`, útil para tests).
-- En el firmware (`sht.ino`): SSID, password y URL del servidor.
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `HYT_API_KEY` | (vacío) | API Key para autenticación. Si no se define, se deshabilita la auth |
+| `HYT_CSV_FILE` | `/app/sensor_data/datos_sensor.csv` | Ruta del CSV |
+| `HYT_RATE_LIMIT` | `60` | Peticiones máximas por minuto por IP |
 
 ## Datos
 
-- `sensor_data/datos_sensor.csv` — datos persistidos (cabecera: `timestamp,temperatura,humedad`). Rotación a los 10 MB con sufijo timestamp. Gitignored (se regenera al arrancar).
+- `sensor_data/datos_sensor.csv` — datos persistidos (cabecera: `timestamp,temperatura,humedad`). Rotación a los 10 MB con sufijo timestamp. Gitignored.
 
-## Limitaciones y roadmap
+## Seguridad
 
-- **Limitación**: sin endpoint de lectura/consulta (solo ingestión). Para analizar datos, leer el CSV directo.
-- **Limitación**: sin autenticación ni HTTPS; usar tras VPN/reverse proxy si se expone.
-- **Roadmap**: endpoint GET de histórico, persistencia en SQLite opcional, dashboard básico.
+- Autenticación por API Key configurable (`X-API-Key` header)
+- Rate limiting (60 req/min por IP por defecto)
+- `credentials.h` con datos WiFi del ESP32 está en `.gitignore`
+- `credentials.example.h` contiene la plantilla documentada
+- Para producción: usar tras reverse proxy con HTTPS
 
 ## Licencia
 
