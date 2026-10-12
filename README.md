@@ -1,24 +1,26 @@
 # hyt-monitor
 
-[![CI](https://github.com/bi0punk/hyt-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/bi0punk/hyt-monitor/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+Sistema de monitoreo de temperatura y humedad: un ESP32 con sensor SHT31 lee datos ambientales y los envía a un servidor FastAPI vía HTTP POST. El servidor guarda en un CSV rotativo y expone endpoints REST para ingesta y consulta.
 
-Temperature and humidity monitoring system. An ESP32 with an SHT31 sensor reads environmental data and sends it to a FastAPI server via HTTP POST. The server stores data in a rotating CSV and exposes REST endpoints for ingestion and query.
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.139-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Arduino](https://img.shields.io/badge/Arduino-ESP32-00979D?logo=arduino)](https://www.arduino.cc/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com/)
+[![CI](https://github.com/bi0punk/hyt-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/bi0punk/hyt-monitor/actions)
+[![Licencia](https://img.shields.io/badge/Licencia-MIT-green)](LICENSE)
 
-## Tabla de contenidos
+## Contenido
 
 - [Características](#características)
-- [Stack](#stack)
 - [Arquitectura](#arquitectura)
-- [Requisitos](#requisitos)
+- [Stack](#stack)
+- [Estructura del repositorio](#estructura-del-repositorio)
 - [Instalación](#instalación)
 - [Uso](#uso)
-- [Tests](#tests)
-- [CI](#ci)
 - [Configuración](#configuración)
 - [Datos](#datos)
 - [Seguridad](#seguridad)
+- [Tests / CI](#tests--ci)
 - [Licencia](#licencia)
 
 ## Características
@@ -33,35 +35,60 @@ Temperature and humidity monitoring system. An ESP32 with an SHT31 sensor reads 
 - Endpoint GET para consulta de datos históricos
 - Protección contra race condition en rotación CSV (`threading.Lock`)
 
-## Stack
-
-- **Lenguaje**: Python 3.12+ (servidor) · C++/Arduino (firmware ESP32)
-- **Web**: FastAPI + Uvicorn
-- **Sensor**: SHT31 (I2C) vía firmware `sht.ino`
-- **Persistencia**: CSV rotante
-- **TZ**: pytz (`Chile/Continental`)
-- **Calidad**: ruff (lint), pytest
-- **Despliegue**: Docker + Docker Compose
-
 ## Arquitectura
 
+```mermaid
+sequenceDiagram
+    participant ESP as ESP32 + SHT31
+    participant API as FastAPI (app.main :8000)
+    participant CSV as sensor_data/datos_sensor.csv
+
+    ESP->>API: POST /api/sensor-data {temperatura, humedad}
+    Note over API: require_auth (X-API-Key) + rate limit
+    API->>API: Valida rangos con Pydantic + timestamp Chile/Continental
+    API->>CSV: append fila (rotación automática 10MB)
+    API-->>ESP: {"status": "ok", "timestamp": "..."}
+
+    CLI[Cliente] ->> API: GET /api/sensor-data?limit=100
+    Note over API: require_auth + rate limit
+    API-->>CLI: {"data": [...], "count": N}
 ```
-ESP32 + SHT31 ──HTTP POST──► FastAPI (app.main) ──append──► sensor_data/datos_sensor.csv
-                 (API Key)                       (rotación 10MB)
+
+Flujo: el ESP32 lee temperatura/humedad del SHT31 y hace `POST /api/sensor-data`; el servidor valida con Pydantic, timestampa y appenda al CSV con rotación a 10 MB, protegido por API Key y rate limit.
+
+## Stack
+
+| Componente | Tecnología |
+|---|---|
+| Servidor | Python 3.12+, FastAPI + Uvicorn |
+| Sensor | SHT31 (I2C) vía firmware `sht.ino` (C++/Arduino) |
+| Persistencia | CSV rotante |
+| TZ | pytz (`Chile/Continental`) |
+| Calidad | ruff (lint), pytest |
+| Despliegue | Docker + Docker Compose |
+
+## Estructura del repositorio
+
 ```
-
-- El ESP32 lee temperatura/humedad del SHT31 y hace `POST /api/sensor-data`
-- El servidor valida con Pydantic, timestampa y appenda al CSV (rotación a 10MB)
-- `sensor_data/` se monta como volumen en Docker para persistencia
-- Las credenciales WiFi del ESP32 se configuran en `credentials.h` (copiado desde `credentials.example.h`)
-
-## Requisitos
-
-- Python 3.12+ (o Docker)
-- ESP32 + sensor SHT31 para el firmware (opcional para solo servidor)
-- Wi-Fi entre ESP32 y el host del servidor
+hyt-monitor/
+├── app/
+│   └── main.py             # Aplicación FastAPI (POST/GET + CSV rotativo)
+├── sht.ino                 # Firmware ESP32 + SHT31
+├── credentials.example.h   # Template WiFi/URL (copia a credentials.h)
+├── sensor_data/            # Datos persistidos (gitignored)
+├── tests/
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── pyproject.toml
+├── .env.example
+├── .github/workflows/ci.yml
+└── README.md
+```
 
 ## Instalación
+
+Requisitos: Python 3.12+ (o Docker), ESP32 + sensor SHT31 para el firmware (opcional para solo servidor), conexión WiFi entre ESP32 y el host del servidor.
 
 Con Docker (recomendado):
 
@@ -83,6 +110,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 1. Copia `credentials.example.h` a `credentials.h`
 2. Edita `credentials.h` con tu SSID, password WiFi y URL del servidor
 3. Flashea `sht.ino` al ESP32 con Arduino IDE
+
+`credentials.h` está en `.gitignore` y no se sube al repositorio.
 
 ## Uso
 
@@ -107,25 +136,12 @@ Respuesta:
 curl -H 'X-API-Key: tu_api_key' http://localhost:8000/api/sensor-data?limit=100
 ```
 
-## Tests
-
-```bash
-pytest -q
-```
-
-## CI
-
-GitHub Actions (`.github/workflows/ci.yml`) sobre Python 3.12:
-
-- **lint** — `ruff check .`
-- **test** — pytest
-
 ## Configuración
 
 Variables de entorno:
 
 | Variable | Default | Descripción |
-|----------|---------|-------------|
+|---|---|---|
 | `HYT_API_KEY` | (vacío) | API Key para autenticación. Si no se define, se deshabilita la auth |
 | `HYT_CSV_FILE` | `/app/sensor_data/datos_sensor.csv` | Ruta del CSV |
 | `HYT_RATE_LIMIT` | `60` | Peticiones máximas por minuto por IP |
@@ -141,6 +157,17 @@ Variables de entorno:
 - `credentials.h` con datos WiFi del ESP32 está en `.gitignore`
 - `credentials.example.h` contiene la plantilla documentada
 - Para producción: usar tras reverse proxy con HTTPS
+
+## Tests / CI
+
+CI: GitHub Actions sobre Python 3.12:
+
+- **lint** — `ruff check .`
+- **test** — pytest
+
+```bash
+pytest -q
+```
 
 ## Licencia
 
