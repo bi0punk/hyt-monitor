@@ -15,6 +15,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import importlib
 
     import app.main as mainmod
+
     importlib.reload(mainmod)
     from fastapi.testclient import TestClient
 

@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytz
 from fastapi import FastAPI, HTTPException, Request
@@ -93,7 +93,7 @@ async def obtener_datos(request: Request, limit: int = 100):
     rows = []
     with _csv_lock:
         if os.path.exists(CSV_FILE):
-            with open(CSV_FILE, mode="r", newline="") as f:
+            with open(CSV_FILE, newline="") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     rows.append(row)
